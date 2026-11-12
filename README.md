@@ -67,6 +67,8 @@ This only rules out pixel-level copies. It doesn't measure how varied the poses 
 
 `ui.py` is a small server built on Python's standard library. It loads the checkpoint once and streams the denoising process to the page as server-sent events, so you can watch figures form out of noise. Sampling 16 figures over the full 1000 steps takes about 2 seconds on an RTX 4080. Controls: number of figures, seed, live preview on/off, and a black-on-white "paper" view.
 
+<img src="assets/web_ui.png" alt="Web UI showing a grid of 16 generated stick figures" width="600">
+
 ## Files
 
 ```
