@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stick Diffusion</title>
+<style>
+  :root {
+    --bg: #f4f1ea; --panel: #fffdf8; --ink: #1d1b18; --muted: #6f6a60;
+    --line: #ddd6c8; --accent: #c2410c; --accent-ink: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15140f; --panel: #1e1d18; --ink: #ece8de; --muted: #9a9486;
+            --line: #34312a; --accent: #f97316; --accent-ink: #1a1206; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end;
+              padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--muted);
+          text-transform: uppercase; letter-spacing: 0.05em; }
+  select, input[type=number] { font: inherit; color: var(--ink); background: var(--bg);
+          border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  input[type=number] { width: 9.5em; }
+  .seed { display: flex; gap: 6px; }
+  button { font: inherit; cursor: pointer; border-radius: 6px; padding: 7px 12px;
+           border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent;
+                   font-weight: 600; padding: 7px 18px; margin-left: auto; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .check { display: flex; align-items: center; gap: 6px; text-transform: none;
+           letter-spacing: 0; font-size: 14px; color: var(--ink); padding-bottom: 7px; }
+  .status { display: flex; align-items: center; gap: 12px; margin: 18px 0 10px;
+            color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .bar { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
+  .grid { display: grid; gap: 6px; }
+  .grid canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated;
+                 border-radius: 4px; background: #000; display: block; }
+  .grid.paper canvas { filter: invert(1); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Stick-figure diffusion</h1>
+  <p class="sub">A 1.1M-parameter DDPM trained from scratch on procedurally drawn stick figures, sampled live over 1000 denoising steps.</p>
+
+  <div class="controls">
+    <label>Count
+      <select id="n">
+        <option>4</option><option>9</option><option selected>16</option>
+        <option>36</option><option>64</option>
+      </select>
+    </label>
+    <label>Seed
+      <span class="seed">
+        <input id="seed" type="number" min="0" step="1">
+        <button id="dice" title="Random seed and generate">Random</button>
+      </span>
+    </label>
+    <label class="check"><input id="live" type="checkbox" checked> Show denoising</label>
+    <label class="check"><input id="paper" type="checkbox" checked> Paper</label>
+    <button id="go" class="primary">Generate</button>
+  </div>
+
+  <div class="status"><span id="msg">Ready</span><div class="bar"><div id="prog"></div></div></div>
+  <div id="grid" class="grid paper"></div>
+</main>
+
+<script>
+const S = 32, $ = id => document.getElementById(id);
+const grid = $("grid");
+let es = null, ctxs = [];
+
+function layout(n) {
+  const cols = Math.ceil(Math.sqrt(n));
+  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  grid.replaceChildren();
+  ctxs = [];
+  for (let k = 0; k < n; k++) {
+    const c = document.createElement("canvas");
+    c.width = c.height = S;
+    grid.appendChild(c);
+    ctxs.push(c.getContext("2d"));
+  }
+}
+
+function draw(b64) {
+  const px = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0));
+  ctxs.forEach((ctx, k) => {
+    const img = ctx.createImageData(S, S);
+    for (let j = 0; j < S * S; j++) {
+      const v = px[k * S * S + j], o = j * 4;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+      img.data[o + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  });
+}
+
+function generate() {
+  if (es) es.close();
+  const n = +$("n").value, seed = Math.max(0, Math.floor(+$("seed").value || 0));
+  const every = $("live").checked ? 10 : 1000;
+  layout(n);
+  $("go").disabled = true;
+  $("msg").textContent = "Starting…";
+  $("prog").style.width = "0";
+  const t0 = performance.now();
+  es = new EventSource(`/generate?n=${n}&seed=${seed}&every=${every}`);
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    draw(d.px);
+    $("prog").style.width = `${(100 * d.step) / d.total}%`;
+    if (d.done) {
+      es.close(); es = null;
+      $("go").disabled = false;
+      $("msg").textContent = `Done: ${n} figures, seed ${seed}, ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+    } else {
+      $("msg").textContent = `Step ${d.step} / ${d.total}`;
+    }
+  };
+  es.onerror = () => {
+    if (!es) return;
+    es.close(); es = null;
+    $("go").disabled = false;
+    $("msg").textContent = "Connection lost: is ui.py still running?";
+  };
+}
+
+const randomSeed = () => { $("seed").value = Math.floor(Math.random() * 1e6); };
+$("go").onclick = generate;
+$("dice").onclick = () => { randomSeed(); generate(); };
+$("paper").onchange = e => grid.classList.toggle("paper", e.target.checked);
+$("seed").onkeydown = e => { if (e.key === "Enter") generate(); };
+randomSeed();
+generate();
+</script>
+</body>
+</html>

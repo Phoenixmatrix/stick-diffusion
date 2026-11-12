@@ -1,0 +1,13 @@
+[project]
+name = "stick-diffusion"
+version = "0.1.0"
+description = "A tiny diffusion model trained from scratch on procedurally generated stick figures"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.5.4",
+    "pillow>=13.0.0",
+    "torch>=2.15.0",
+]
