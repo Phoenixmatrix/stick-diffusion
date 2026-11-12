@@ -25,18 +25,43 @@ The forward process noises a figure at t = 0, 250, 500, 750 and 999:
 
 Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/). An NVIDIA GPU is strongly recommended; CPU works but training will be slow.
 
+The repo ships trained weights (`weights/stick-diffusion.pt`, 4.5 MB), so you can sample straight away:
+
 ```sh
 uv sync
-
-uv run python data.py      # optional: writes out/real_grid.png, a preview of the training data
-uv run python train.py     # trains and writes out/ckpt.pt plus sample grids every 2k steps
-uv run python sample.py    # writes out/generated.png (--n, --seed)
 uv run python ui.py        # web UI at http://localhost:8000
+uv run python sample.py    # writes out/generated.png (--n, --seed)
 ```
 
-Checkpoints aren't committed, so you need to run `train.py` before `sample.py` or `ui.py`.
+To train your own model:
+
+```sh
+uv run python data.py      # optional: writes out/real_grid.png, a preview of the training data
+uv run python train.py     # writes out/ckpt.pt plus sample grids every 2k steps
+```
+
+`sample.py`, `ui.py` and `memorization.py` use your own `out/ckpt.pt` if it exists, otherwise the shipped weights. Pass `--ckpt` to choose one explicitly.
 
 `uv run python train.py --overfit --steps 2000 --batch 64` is a useful sanity check: it trains on 16 fixed images, and the samples should reproduce them. If they come out as grey mush, the schedule or sampler is broken.
+
+## Does it copy the training data?
+
+No sample is a pixel-level copy of a training image. `memorization.py` generates 1,000 samples and finds each one's nearest neighbour among the 20,000 training images, using per-pixel RMS distance with pixels in [-1, 1]. It compares them with two reference groups:
+
+- **held-out:** 1,000 fresh procedural figures the model never saw. This shows what a "new" figure looks like.
+- **control:** 256 samples from a model deliberately overfit on 16 training images (`train.py --overfit`). This shows what copying looks like through the same sampler.
+
+| group | min | median | max |
+| --- | --- | --- | --- |
+| generated | 0.184 | 0.273 | 0.369 |
+| held-out (new figures) | 0.160 | 0.275 | 0.394 |
+| control (copies) | 0.014 | 0.022 | 0.290 |
+
+Generated samples are as far from the training set as genuinely new figures are, and the closest one is about 8× further away than a typical copy. The 16 closest pairs are shown below, generated on top and their nearest training image underneath. They share a rough stance but differ in arm angles, leg spread and head shape:
+
+![Closest generated/training pairs](assets/nearest_pairs.png)
+
+This only rules out pixel-level copies. It doesn't measure how varied the poses are, and a copy shifted by a few pixels would pass. The control needs `out/overfit_ckpt.pt` from the overfit run; without it, that row is skipped.
 
 ## Web UI
 
@@ -52,6 +77,8 @@ train.py      training loop (EMA, periodic samples and checkpoints)
 sample.py     generate a grid from a checkpoint
 ui.py         local web UI server
 ui.html       web UI page
+memorization.py  nearest-neighbour check against the training set
+weights/      pretrained checkpoint (EMA weights after 10k steps)
 ```
 
 ## License

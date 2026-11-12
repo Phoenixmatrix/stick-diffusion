@@ -21,6 +21,8 @@ out/
 *.pt
 *.pth
 *.ckpt
+# ...except the pretrained checkpoint shipped with the repo
+!weights/stick-diffusion.pt
 
 # Secrets / local config
 .env

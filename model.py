@@ -1,5 +1,6 @@
 """Tiny UNet for 32x32 grayscale diffusion. Written from scratch, randomly initialised."""
 import math
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -63,6 +64,21 @@ class UNet(nn.Module):
         h = self.up0(F.interpolate(h, scale_factor=2, mode="nearest"))
         h = self.u0(torch.cat([h, h0], 1), temb)
         return self.out(h)
+
+
+LOCAL_CKPT = Path("out/ckpt.pt")  # written by train.py
+SHIPPED_CKPT = Path(__file__).parent / "weights" / "stick-diffusion.pt"  # committed to the repo
+
+
+def default_ckpt() -> Path:
+    """Prefer a locally trained checkpoint, fall back to the one shipped with the repo."""
+    return LOCAL_CKPT if LOCAL_CKPT.exists() else SHIPPED_CKPT
+
+
+def load_model(path, device) -> UNet:
+    model = UNet().to(device).eval()
+    model.load_state_dict(torch.load(path, map_location=device, weights_only=True)["ema"])
+    return model
 
 
 if __name__ == "__main__":

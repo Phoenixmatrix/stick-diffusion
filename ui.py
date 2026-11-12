@@ -11,7 +11,7 @@ import torch
 
 from data import IMG_SIZE
 from diffusion import Diffusion
-from model import UNet
+from model import default_ckpt, load_model
 
 HTML = Path(__file__).with_name("ui.html")
 
@@ -85,16 +85,16 @@ def make_handler(model, diff, lock, device):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt", default="out/ckpt.pt")
+    p.add_argument("--ckpt", default=None, help="default: out/ckpt.pt if present, else weights/stick-diffusion.pt")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = UNet().to(device).eval()
-    model.load_state_dict(torch.load(args.ckpt, map_location=device)["ema"])
+    ckpt = args.ckpt or default_ckpt()
+    model = load_model(ckpt, device)
     handler = make_handler(model, Diffusion(device), threading.Lock(), device)
-    print(f"Stick-figure diffusion UI on http://localhost:{args.port}  ({device})")
+    print(f"Stick-figure diffusion UI on http://localhost:{args.port}  ({device}, checkpoint: {ckpt})")
     ThreadingHTTPServer((args.host, args.port), handler).serve_forever()
 
 
