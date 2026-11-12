@@ -1,10 +1,12 @@
-"""Tiny UNet for 32x32 grayscale diffusion. Written from scratch, randomly initialised."""
+"""Tiny attribute-conditioned UNet for 32x32 grayscale diffusion. Written from scratch, randomly initialised."""
 import math
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from data import ATTR_SIZES, ATTRS
 
 
 def timestep_embedding(t: torch.Tensor, dim: int) -> torch.Tensor:
@@ -32,11 +34,14 @@ class ResBlock(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, ch=(32, 64, 128), tdim=128):
+    def __init__(self, ch=(32, 64, 128), tdim=128, attr_sizes=ATTR_SIZES):
         super().__init__()
         c0, c1, c2 = ch
         self.tdim = tdim
         self.tmlp = nn.Sequential(nn.Linear(tdim, tdim), nn.SiLU(), nn.Linear(tdim, tdim))
+        # One embedding table per attribute; the extra last index (k) is the "any" / null token.
+        self.cond = nn.ModuleList([nn.Embedding(k + 1, tdim) for k in attr_sizes])
+        self.null_index = list(attr_sizes)
 
         self.inc = nn.Conv2d(1, c0, 3, padding=1)
         self.d0 = ResBlock(c0, c0, tdim)                 # 32x32
@@ -54,8 +59,10 @@ class UNet(nn.Module):
 
         self.out = nn.Sequential(nn.GroupNorm(8, c0), nn.SiLU(), nn.Conv2d(c0, 1, 3, padding=1))
 
-    def forward(self, x, t):
+    def forward(self, x, t, c):
+        """x: [B,1,H,W] noisy images, t: [B] timesteps, c: [B, n_attrs] attribute indices (k = any)."""
         temb = self.tmlp(timestep_embedding(t, self.tdim))
+        temb = temb + sum(emb(c[:, i]) for i, emb in enumerate(self.cond))
         h0 = self.d0(self.inc(x), temb)
         h1 = self.d1(self.down0(h0), temb)
         h = self.mid2(self.mid1(self.down1(h1), temb), temb)
@@ -75,13 +82,24 @@ def default_ckpt() -> Path:
     return LOCAL_CKPT if LOCAL_CKPT.exists() else SHIPPED_CKPT
 
 
+def null_cond(n, device=None) -> torch.Tensor:
+    """All-"any" labels: [n, n_attrs], each entry set to that attribute's null index."""
+    return torch.tensor(ATTR_SIZES, device=device).repeat(n, 1)
+
+
 def load_model(path, device) -> UNet:
+    ck = torch.load(path, map_location=device, weights_only=True)
+    if ck.get("attrs") != ATTRS:
+        raise ValueError(
+            f"{path} was trained with attributes {ck.get('attrs')!r}, but this code expects {ATTRS!r}. "
+            "It is probably a checkpoint from an older version: retrain with train.py or pass --ckpt."
+        )
     model = UNet().to(device).eval()
-    model.load_state_dict(torch.load(path, map_location=device, weights_only=True)["ema"])
+    model.load_state_dict(ck["ema"])
     return model
 
 
 if __name__ == "__main__":
     m = UNet()
     print(f"{sum(p.numel() for p in m.parameters()) / 1e6:.2f}M params")
-    print(m(torch.randn(2, 1, 32, 32), torch.tensor([0, 999])).shape)
+    print(m(torch.randn(2, 1, 32, 32), torch.tensor([0, 999]), null_cond(2)).shape)

@@ -38,6 +38,13 @@
             color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
   .bar { flex: 1; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
   .bar > div { height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
+  .attrs { display: flex; flex-wrap: wrap; gap: 12px 16px; width: 100%; padding-bottom: 14px;
+           border-bottom: 1px solid var(--line); }
+  .attrs select { min-width: 7.5em; }
+  .attrs select.set { border-color: var(--accent); }
+  .guide { display: grid; gap: 4px; }
+  .guide input { width: 9em; accent-color: var(--accent); }
+  .guide.off { opacity: 0.45; }
   .grid { display: grid; gap: 6px; }
   .grid canvas { width: 100%; aspect-ratio: 1; image-rendering: pixelated;
                  border-radius: 4px; background: #000; display: block; }
@@ -47,9 +54,14 @@
 <body>
 <main>
   <h1>Stick-figure diffusion</h1>
-  <p class="sub">A 1.1M-parameter DDPM trained from scratch on procedurally drawn stick figures, sampled live over 1000 denoising steps.</p>
+  <p class="sub">A 1.1M-parameter DDPM trained from scratch on procedurally drawn stick figures. Pick what you want (or leave it on Any) and watch it denoise over 1000 steps.</p>
 
   <div class="controls">
+    <div class="attrs" id="attrs">
+      <label class="guide" id="guide" title="Classifier-free guidance: higher follows the attributes more strictly, lower gives more variety">Guidance <span id="gval"></span>
+        <input id="guidance" type="range" min="1" max="6" step="0.5">
+      </label>
+    </div>
     <label>Count
       <select id="n">
         <option>4</option><option>9</option><option selected>16</option>
@@ -74,7 +86,36 @@
 <script>
 const S = 32, $ = id => document.getElementById(id);
 const grid = $("grid");
-let es = null, ctxs = [];
+let es = null, ctxs = [], attrNames = [];
+
+async function buildAttrs() {
+  const { attrs, default_guidance } = await (await fetch("/attrs")).json();
+  attrNames = Object.keys(attrs);
+  const host = $("attrs"), guide = $("guide");
+  for (const [name, values] of Object.entries(attrs)) {
+    const label = document.createElement("label");
+    label.textContent = name;
+    const sel = document.createElement("select");
+    sel.id = `attr-${name}`;
+    for (const v of ["any", ...values]) sel.add(new Option(v === "any" ? "Any" : v, v));
+    sel.onchange = syncAttrs;
+    label.appendChild(sel);
+    host.insertBefore(label, guide);
+  }
+  $("guidance").value = default_guidance;
+  syncAttrs();
+}
+
+function syncAttrs() {
+  let anySet = false;
+  for (const name of attrNames) {
+    const sel = $(`attr-${name}`);
+    sel.classList.toggle("set", sel.value !== "any");
+    anySet ||= sel.value !== "any";
+  }
+  $("guide").classList.toggle("off", !anySet);  // guidance has no effect when everything is Any
+  $("gval").textContent = (+$("guidance").value).toFixed(1);
+}
 
 function layout(n) {
   const cols = Math.ceil(Math.sqrt(n));
@@ -111,7 +152,9 @@ function generate() {
   $("msg").textContent = "Starting…";
   $("prog").style.width = "0";
   const t0 = performance.now();
-  es = new EventSource(`/generate?n=${n}&seed=${seed}&every=${every}`);
+  const q = new URLSearchParams({ n, seed, every, guidance: $("guidance").value });
+  for (const name of attrNames) q.set(name, $(`attr-${name}`).value);
+  es = new EventSource(`/generate?${q}`);
   es.onmessage = e => {
     const d = JSON.parse(e.data);
     draw(d.px);
@@ -137,8 +180,9 @@ $("go").onclick = generate;
 $("dice").onclick = () => { randomSeed(); generate(); };
 $("paper").onchange = e => grid.classList.toggle("paper", e.target.checked);
 $("seed").onkeydown = e => { if (e.key === "Enter") generate(); };
+$("guidance").oninput = syncAttrs;
 randomSeed();
-generate();
+buildAttrs().then(generate);
 </script>
 </body>
 </html>

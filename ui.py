@@ -9,9 +9,9 @@ from urllib.parse import parse_qs, urlparse
 
 import torch
 
-from data import IMG_SIZE
-from diffusion import Diffusion
-from model import default_ckpt, load_model
+from data import ATTRS, IMG_SIZE
+from diffusion import DEFAULT_GUIDANCE, Diffusion
+from model import default_ckpt, load_model, null_cond
 
 HTML = Path(__file__).with_name("ui.html")
 
@@ -40,6 +40,13 @@ def make_handler(model, diff, lock, device):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+            elif url.path == "/attrs":
+                body = json.dumps({"attrs": ATTRS, "default_guidance": DEFAULT_GUIDANCE}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif url.path == "/generate":
                 self.generate(parse_qs(url.query))
             else:
@@ -62,6 +69,19 @@ def make_handler(model, diff, lock, device):
             n = arg("n", 16, 1, 64)
             seed = arg("seed", 0, 0, 2**31 - 1)
             every = arg("every", 10, 1, diff.T)
+            try:
+                guidance = min(10.0, max(0.0, float(q.get("guidance", [DEFAULT_GUIDANCE])[0])))
+            except ValueError:
+                guidance = DEFAULT_GUIDANCE
+            cond = null_cond(n)
+            for i, (name, values) in enumerate(ATTRS.items()):
+                v = q.get(name, ["any"])[0]
+                if v == "any":
+                    continue
+                if v not in values:
+                    self.send_error(400, f"{name} must be one of: any, {', '.join(values)}")
+                    return
+                cond[:, i] = values.index(v)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -75,7 +95,7 @@ def make_handler(model, diff, lock, device):
             try:
                 with lock:  # one generation on the GPU at a time
                     g = torch.Generator(device=device).manual_seed(seed)
-                    x = diff.sample(model, n, IMG_SIZE, generator=g, callback=on_step)
+                    x = diff.sample(model, n, IMG_SIZE, cond=cond, guidance=guidance, generator=g, callback=on_step)
                 self.emit({"step": diff.T, "total": diff.T, "px": to_b64(x), "done": True})
             except ClientGone:
                 pass
